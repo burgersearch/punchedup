@@ -43,29 +43,70 @@ PROJECTS_API_PREVIEW_KEY="application/vnd.github.inertia-preview+json"
 # then fetching and choosing projects should be added to the workflow.
 #project_id=3359007 # etclabscore/client project
 
-set_project_id () 
-{
-projectList=("etclabscore-tooling:2015993"
-"etclabscore-web-n-docs:2016118"
-"Communications:2018164"
-"ECIPs:2142003"
-"Jade:2169752"
-"EVM LLVM Development:2240283"
-"SputnikVM JIT:2256232"
-"Meetings:2842962"
-"client:3359007"
-"Speaking, Workshops, and Business Related Projects:3374615"
-)
 
-select project in "${projectList[@]%%:*}"; do
+PROJECTS=()
+select_projects () {
+  local org
+  org=$(get_org)
+  fetch_projects $org
+  process_available_projects $org
+  select project in "${PROJECTS[@]%%:*}"; do
     if [ -n "$project" ]; then
         echo "selecting project $project" 
-        project_id=${projectList[$REPLY - 1]#*:}
+        project_id=${PROJECTS[$REPLY - 1]#*:}
         echo "set project id to ${project_id}"
     fi
     break
 done
 }
+
+get_org () 
+{
+  local orgs=("etclabscore" "open-rpc")
+  select org in "${orgs[@]}"; do
+    if [ -n "$org" ]; then
+      echo "$org"
+    fi
+    break;
+  done
+}
+
+fetch_projects() {
+    local _org="$1"
+    echo $_org
+    mkdir -p ${GHTD}/orgs/${_org}/projects
+    rm -rf ${GHTD}/orgs/${_org}/projects/* # Remove all existing column documents. This is kind of ugly, but ensures no dead columns.
+
+    curl >${GHTD}/orgs/${_org}/projects/.response 2>&1 \
+        --silent \
+        --show-error \
+        -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Accept: $PROJECTS_API_PREVIEW_KEY" \
+        -D "${GHTD}/.response-header" \
+        https://api.github.com/orgs/${_org}/projects
+
+
+}
+
+process_available_projects() {
+    local _org="$1"
+    local _d=${GHTD}/orgs/${_org}/projects
+    local _responsef=${_d}/.response
+    local _n=0
+    local _max
+
+    _max=$(jj -i $_responsef '#')
+    while [[ $_n -lt $_max ]]; do
+        _j_cmd=/"$(which jj) -i $_responsef -n $_n"
+        [[ ! -z $($_j_cmd) ]] || break
+
+        _project_id="$($_j_cmd.id)" # HACK
+        _name="$($_j_cmd.name)" # HACK
+        PROJECTS+=("${_name}:${_project_id}")
+        _n=$((_n + 1))
+    done
+}
+
 fetch_columns_for_project() {
 
     local _project_id="$1"
@@ -284,7 +325,7 @@ post_task() {
     cp ${GHTD}/.response.json ${GHTD}/projects/${_project_id}/columns/${_column_id}/cards/${_card_id}.json
 }
 
-set_project_id
+select_projects
 get_project_columns $project_id
 task_store=$(input_new_task_card)
 column_id=$(select_column_id_for_project $project_id)
